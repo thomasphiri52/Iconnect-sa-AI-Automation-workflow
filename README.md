@@ -1,28 +1,30 @@
-# iConnect SA AI Automation Workflow
+# iConnect SA Production V3
 
-A Streamlit prototype for the iConnect SA AI Automation Platform.
+iConnect SA AI Automation V3 is an integration-ready Streamlit business automation platform.
 
-## Included
-- Executive dashboard and KPIs
-- AI Command Centre
-- AI lead scoring / Lead Intelligence
-- Campaign Automation
-- AI Content Studio
-- CRM Automation
-- Customer Intelligence
-- Analytics & ROI
-- iConnect SA Business Impact section
-- AI learning-loop workflow
+## V3 additions
+- AI provider adapter with server-side API key support
+- WhatsApp Business outbound adapter
+- SMTP email outbound adapter
+- Website lead webhook (FastAPI)
+- POPIA consent register and withdrawal status
+- Workspace foundation
+- Scheduled-worker entry point for cron/Task Scheduler
+- Environment-only secrets configuration
 
-## Run locally
-1. Install Python 3.10+.
-2. Install dependencies:
-   `pip install -r requirements.txt`
-3. Start the app:
-   `streamlit run app.py`
+## Run dashboard
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-## GitHub / Streamlit Cloud
-Upload `app.py`, `requirements.txt`, and this README to a GitHub repository.
-Use `app.py` as the Streamlit entry point.
+## Run webhook
+```bash
+uvicorn webhook:app --host 0.0.0.0 --port 8000
+```
 
-This is a prototype with simulated data. Replace the simulated data and action handlers with iConnect SA's production CRM, advertising, messaging and analytics integrations.
+## Security
+Set strong admin credentials and provider secrets as environment variables. Use HTTPS, a managed secret store, backups, access logging and a production PostgreSQL database before handling real customer data.
+
+## Important
+External integrations remain disabled until valid credentials and customer consent are configured. POPIA tooling is operational support and not legal advice.
