@@ -92,7 +92,6 @@ def add_activity(event, lead_id=None):
 def add_alert(event):
     with db() as c: c.execute('INSERT INTO alerts(event_time,event) VALUES (?,?)',(datetime.now().isoformat(timespec='seconds'),event))
 
-
 def get_user(username):
     with db() as c:
         row=c.execute('SELECT * FROM users WHERE username=? AND active=1',(username,)).fetchone()
