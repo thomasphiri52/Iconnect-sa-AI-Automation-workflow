@@ -6,10 +6,14 @@ from db import init_db, db, rows, add_activity, add_alert, get_user, ensure_admi
 from integrations import ai_generate, send_email, send_whatsapp
 
 st.set_page_config(page_title='iConnect SA AI Automation', page_icon='🤖', layout='wide')
+
+# Production-safe login defaults: configure ICONNECT_ADMIN_USER and ICONNECT_ADMIN_PASSWORD
+# in Streamlit secrets/environment before deployment.
 st.markdown('''<style>.stApp{background:linear-gradient(135deg,#080d1a,#101a32)} section[data-testid="stSidebar"]{background:#0b1224} div[data-testid="stMetric"]{background:#121c32;border:1px solid #263654;padding:14px;border-radius:12px}.card{background:#121c32;border:1px solid #263654;border-radius:12px;padding:16px;margin-bottom:10px}</style>''', unsafe_allow_html=True)
 
 LEAD_STAGES=['New','Contacted','Qualified','Proposal','Won','Lost']; LEAD_SOURCES=['Website','WhatsApp','Email','Social','Campaign','Referral','Customer Service','Manual']; PRODUCTS=['Fibre','Business Internet','VoIP','Cloud','Managed Services','General']
 PAGES=['Overview','Lead / CRM','AI Customer Service','Ticket Queue','Alerts & Activity','Plan Campaigns','Generate Content','Schedule & Approvals','Report Results','Settings','Integrations','POPIA Consent']
+ROLE_PAGES={'viewer':['Overview','AI Customer Service','Ticket Queue','Alerts & Activity','Report Results'],'agent':['Overview','Lead / CRM','AI Customer Service','Ticket Queue','Alerts & Activity','Plan Campaigns','Generate Content','Schedule & Approvals','Report Results'],'manager':PAGES,'admin':PAGES}
 
 @st.cache_resource
 def boot(): init_db(); return True
@@ -27,7 +31,7 @@ def authenticate():
         if account and hmac.compare_digest(account['password_hash'],hash_pw(pw)):
             st.session_state.auth=True; st.session_state.user=user; st.session_state.role=account['role']; add_audit(user,'login'); st.rerun()
         else: st.sidebar.error('Invalid credentials.')
-    st.title('iConnect SA | Secure workspace'); st.info('Set ICONNECT_ADMIN_USER and ICONNECT_ADMIN_PASSWORD before deployment.'); st.stop()
+    st.title('iConnect SA | Secure workspace'); st.info('Configure ICONNECT_ADMIN_USER and ICONNECT_ADMIN_PASSWORD before deployment.'); st.stop()
 
 authenticate()
 
@@ -49,13 +53,8 @@ def makecopy(ch,aud,obj,offer,tone):
 def navigate(target): st.session_state.page=target; st.rerun()
 if 'page' not in st.session_state: st.session_state.page='Overview'
 st.sidebar.title('🤖 iConnect SA'); st.sidebar.caption(f"AI Automation Control Room · {st.session_state.get('user','admin')} · {st.session_state.get('role','viewer')}")
-allowed=ROLE_PAGES.get(st.session_state.get('role','viewer'),ROLE_PAGES['viewer']) if st.session_state.get('auth') else PAGES
-page=st.sidebar.radio('Navigation',allowed,index=allowed.index(st.session_state.page) if st.session_state.page in allowed else 0); st.session_state.page=page
-
-ROLE_PAGES={'viewer':['Overview','AI Customer Service','Ticket Queue','Alerts & Activity','Report Results'],'agent':['Overview','Lead / CRM','AI Customer Service','Ticket Queue','Alerts & Activity','Plan Campaigns','Generate Content','Schedule & Approvals','Report Results'],'manager':PAGES,'admin':PAGES}
 allowed=ROLE_PAGES.get(st.session_state.get('role','viewer'),ROLE_PAGES['viewer'])
-if page not in allowed:
-    st.session_state.page=allowed[0]; st.rerun()
+page=st.sidebar.radio('Navigation',allowed,index=allowed.index(st.session_state.page) if st.session_state.page in allowed else 0); st.session_state.page=page
 if st.sidebar.button('Sign out'): add_audit(st.session_state.get('user'),'logout'); st.session_state.clear(); st.rerun()
 st.title('iConnect SA | AI Automation'); st.caption('CRM · customer service · campaigns · approvals · reporting')
 
@@ -113,7 +112,7 @@ elif page=='Ticket Queue':
     st.subheader('Ticket Queue'); tickets=df('tickets'); st.dataframe(tickets,use_container_width=True,hide_index=True)
     if not tickets.empty:
         tid=st.selectbox('Ticket',tickets.ticket_id.tolist()); new=st.selectbox('Update status',['Open','In progress','Resolved']);
-        if st.button('Update ticket'): 
+        if st.button('Update ticket'):
             with db() as c: c.execute('UPDATE tickets SET status=? WHERE ticket_id=?',(new,tid))
             add_alert(f'{tid} status changed to {new}'); st.rerun()
 
@@ -158,77 +157,29 @@ elif page=='Schedule & Approvals':
                     add_alert(f'{x.campaign} scheduled for {day}'); st.rerun()
                 if c2.button('Request changes',key=f'n{x.id}'):
                     with db() as c: c.execute('UPDATE approvals SET status=?,reviewer=? WHERE id=?',('Changes requested',reviewer,int(x.id)))
-                    st.rerun()
-    st.dataframe(apps.drop(columns=['content']) if not apps.empty else apps,use_container_width=True,hide_index=True)
+                    add_alert(f'{x.campaign} needs changes'); st.rerun()
 
 elif page=='Report Results':
-    r=df('results')
-    if not r.empty:
-        r['CTR (%)']=(r.clicks/r.impressions*100).round(2); r['Lead rate (%)']=(r.leads/r.clicks*100).round(2); r['Cost per lead (R)']=(r.spend/r.leads.replace(0,pd.NA)).round(2)
-    st.dataframe(r,use_container_width=True,hide_index=True); st.download_button('Download CSV report',r.to_csv(index=False).encode(),'iconnect_campaign_report.csv','text/csv')
-    with st.form('result'):
-        name=st.text_input('Campaign'); imp=st.number_input('Impressions',min_value=0); clicks=st.number_input('Clicks',min_value=0); ln=st.number_input('Leads',min_value=0); spend=st.number_input('Spend (R)',min_value=0.0); ok=st.form_submit_button('Add results')
-    if ok and name.strip():
-        with db() as c: c.execute('INSERT INTO results(campaign,impressions,clicks,leads,spend) VALUES (?,?,?,?,?)',(name,imp,clicks,ln,spend)); st.rerun()
-
-elif page=='Integrations':
-    st.subheader('Integration Center')
-    st.caption('Credentials are read from server environment variables. Never paste secrets into the app or database.')
-    a,b,c=st.columns(3)
-    a.metric('AI', 'Connected' if os.getenv('OPENAI_API_KEY') else 'Not configured')
-    b.metric('WhatsApp', 'Connected' if os.getenv('WHATSAPP_ACCESS_TOKEN') else 'Not configured')
-    c.metric('Email', 'Connected' if os.getenv('SMTP_HOST') else 'Not configured')
-    st.markdown('### AI assistant')
-    prompt=st.text_area('Prompt','Create a concise follow-up message for a qualified SME lead.')
-    if st.button('Generate with AI',type='primary'):
-        try: st.session_state.ai_result=ai_generate(prompt)
-        except Exception as e: st.error(f'AI request failed: {e}')
-    if st.session_state.get('ai_result'): st.text_area('AI result',st.session_state.ai_result,height=180)
-    st.markdown('### Test outbound channel')
-    channel=st.selectbox('Channel',['Email','WhatsApp']); destination=st.text_input('Recipient'); message=st.text_area('Message','Hello from iConnect SA.')
-    if st.button('Send test message'):
-        try:
-            result=send_email(destination,'iConnect SA test',message) if channel=='Email' else send_whatsapp(destination,message)
-            if result.get('ok'): st.success('Message sent successfully.'); add_audit(st.session_state.user,'integration_send',channel,destination)
-            else: st.warning(result.get('error','Provider returned an unsuccessful response.'))
-        except Exception as e: st.error(f'Send failed: {e}')
-    st.markdown('### Website lead webhook')
-    st.code('POST /webhook/lead\nHeaders: x-iconnect-token: <your token>\nJSON: {"name":"Jane","email":"jane@example.com","phone":"+27...","company":"ABC","message":"Please call me"}',language='text')
-
-elif page=='POPIA Consent':
-    st.subheader('POPIA Consent & Privacy')
-    st.caption('Record lawful consent and withdrawals before using direct-marketing channels. This module is operational tooling, not legal advice.')
-    with st.form('consent'):
-        subject=st.text_input('Contact / identifier'); channel=st.selectbox('Channel',['Email','WhatsApp','SMS','Phone','Website']); purpose=st.selectbox('Purpose',['Direct marketing','Service communication','Lead processing','Other']); status=st.selectbox('Status',['Granted','Withdrawn','Not granted']); source=st.text_input('Consent source','Website form'); save=st.form_submit_button('Record consent')
-    if save and subject.strip():
-        with db() as c: c.execute('INSERT INTO consent_log(subject,channel,purpose,consent_status,source,recorded_by,recorded_at) VALUES (?,?,?,?,?,?,?)',(subject,channel,purpose,status,source,st.session_state.user,datetime.now().isoformat(timespec='seconds')))
-        add_audit(st.session_state.user,'consent_recorded','consent',subject,status); st.success('Consent record saved.'); st.rerun()
-    con=df('consent_log')
-    st.dataframe(con,use_container_width=True,hide_index=True)
-    if not con.empty: st.download_button('Download consent register',con.to_csv(index=False).encode(),'iconnect_popia_consent.csv','text/csv')
+    st.subheader('Campaign & Business Results'); st.dataframe(results,use_container_width=True,hide_index=True)
+    if not results.empty:
+        a,b,c,d=st.columns(4); a.metric('Leads',int(results.leads.sum())); b.metric('Conversions',int(results.conversions.sum())); c.metric('Spend',f"R{results.spend.sum():,.0f}"); d.metric('Revenue',f"R{results.revenue.sum():,.0f}")
+        st.bar_chart(results.set_index('campaign')[['leads','conversions']])
 
 elif page=='Settings':
-    st.subheader('Deployment & security')
-    if st.session_state.get('role')=='admin':
-        st.markdown('### Team access')
-        users=df('users')
-        st.dataframe(users[['username','role','active','created_at']],use_container_width=True,hide_index=True)
-        with st.form('create_user'):
-            u=st.text_input('Username'); pw=st.text_input('Temporary password',type='password'); role=st.selectbox('Role',['viewer','agent','manager','admin']); create=st.form_submit_button('Create / update user')
-        if create and u.strip() and pw:
-            ensure_admin(u.strip(),pw) if role=='admin' else None
-            if role!='admin':
-                import hashlib as _h
-                with db() as c:
-                    c.execute('INSERT INTO users(username,role,password_hash,active,created_at) VALUES (?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET role=excluded.role,password_hash=excluded.password_hash,active=1',(u.strip(),role,_h.sha256(pw.encode()).hexdigest(),1,datetime.now().isoformat(timespec='seconds')))
-            add_audit(st.session_state.get('user'),'user_upsert','user',u.strip(),role); st.success('User saved.'); st.rerun()
-        st.markdown('### Integration readiness')
-        st.write('WhatsApp Business: ' + ('Configured' if setting('WHATSAPP_ENABLED')=='1' else 'Not configured'))
-        st.write('Email provider: ' + ('Configured' if setting('EMAIL_ENABLED')=='1' else 'Not configured'))
-        st.write('AI provider: ' + ('Configured' if setting('AI_ENABLED')=='1' else 'Not configured'))
-        st.caption('Secrets should be supplied as deployment environment variables or a managed secrets service, not stored in the database.')
-    st.success('Persistent SQLite storage is enabled.'); st.write('Authentication: environment-variable credentials.'); st.write('AI: local deterministic content drafting is enabled; connect an approved AI provider through your own server-side secret before production use.'); st.write('External publishing: intentionally disabled until authorised API credentials, consent controls and human approval are configured.')
-    st.code('ICONNECT_ADMIN_USER=admin\nICONNECT_ADMIN_PASSWORD=use-a-long-random-password\nICONNECT_DB_PATH=iconnect.db',language='bash')
-    st.warning('For a real multi-user deployment, use managed authentication, encrypted secrets, backups, HTTPS, role-based permissions and a production database such as PostgreSQL.')
+    st.subheader('System Settings')
+    st.info('For production, set secrets/environment variables in Streamlit Cloud. Do not store passwords in source code.')
+    st.write('Admin user:', os.getenv('ICONNECT_ADMIN_USER','admin'))
+    st.write('Password configured:', 'Yes' if os.getenv('ICONNECT_ADMIN_PASSWORD') else 'No — set ICONNECT_ADMIN_PASSWORD')
+    st.write('Database:', setting('database_path','iconnect.db'))
 
-st.caption('iConnect SA AI Automation V3 · Integration-ready workspace · Human approval and consent controls required before external publishing')
+elif page=='Integrations':
+    st.subheader('Integrations'); st.write('AI:', 'Configured' if os.getenv('OPENAI_API_KEY') else 'Not configured'); st.write('Email:', 'Configured' if os.getenv('SMTP_HOST') else 'Not configured'); st.write('WhatsApp:', 'Configured' if os.getenv('WHATSAPP_TOKEN') else 'Not configured')
+
+elif page=='POPIA Consent':
+    st.subheader('POPIA Consent Register'); st.write('Capture consent before marketing communications and retain an auditable record.');
+    with st.form('consent'):
+        lead=st.text_input('Lead / contact ID'); purpose=st.text_input('Purpose','Marketing communications'); channel=st.selectbox('Channel',['Email','SMS','WhatsApp','Phone']); granted=st.checkbox('Consent granted'); ok=st.form_submit_button('Save consent',type='primary')
+    if ok and lead.strip():
+        with db() as c: c.execute('INSERT INTO consent(contact_id,purpose,channel,granted_at,revoked_at) VALUES (?,?,?,?,?)',(lead,purpose,channel,datetime.now().isoformat(timespec='seconds') if granted else None,None))
+        add_audit(st.session_state.get('user','admin'),f'consent {lead}: {granted}'); st.success('Consent record saved.'); st.rerun()
+    st.dataframe(df('consent'),use_container_width=True,hide_index=True)
