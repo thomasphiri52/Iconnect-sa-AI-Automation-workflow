@@ -1,7 +1,3 @@
-streamlit
-pandas
-plotly
-requests
-fastapi
-uvicorn
-python-dotenv
+streamlit>=1.40,<2
+pandas>=2.0,<3
+requests>=2.31,<3
